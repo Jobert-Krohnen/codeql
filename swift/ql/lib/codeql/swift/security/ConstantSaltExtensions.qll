@@ -14,16 +14,16 @@ import codeql.swift.dataflow.ExternalFlow
 abstract class ConstantSaltSink extends DataFlow::Node { }
 
 /**
- * A sanitizer for constant salt vulnerabilities.
+ * A barrier for constant salt vulnerabilities.
  */
-abstract class ConstantSaltSanitizer extends DataFlow::Node { }
+abstract class ConstantSaltBarrier extends DataFlow::Node { }
 
 /**
- * A unit class for adding additional taint steps.
+ * A unit class for adding additional flow steps.
  */
-class ConstantSaltAdditionalTaintStep extends Unit {
+class ConstantSaltAdditionalFlowStep extends Unit {
   /**
-   * Holds if the step from `node1` to `node2` should be considered a taint
+   * Holds if the step from `node1` to `node2` should be considered a flow
    * step for paths related to constant salt vulnerabilities.
    */
   abstract predicate step(DataFlow::Node nodeFrom, DataFlow::Node nodeTo);
@@ -35,7 +35,7 @@ class ConstantSaltAdditionalTaintStep extends Unit {
 private class CryptoSwiftSaltSink extends ConstantSaltSink {
   CryptoSwiftSaltSink() {
     // `salt` arg in `init` is a sink
-    exists(NominalTypeDecl c, ConstructorDecl f, CallExpr call |
+    exists(NominalTypeDecl c, Initializer f, CallExpr call |
       c.getName() = ["HKDF", "PBKDF1", "PBKDF2", "Scrypt"] and
       c.getAMember() = f and
       call.getStaticTarget() = f and
@@ -49,7 +49,7 @@ private class CryptoSwiftSaltSink extends ConstantSaltSink {
  */
 private class RnCryptorSaltSink extends ConstantSaltSink {
   RnCryptorSaltSink() {
-    exists(NominalTypeDecl c, MethodDecl f, CallExpr call |
+    exists(NominalTypeDecl c, Method f, CallExpr call |
       c.getFullName() =
         [
           "RNCryptor", "RNEncryptor", "RNDecryptor", "RNCryptor.EncryptorV3",
@@ -68,4 +68,28 @@ private class RnCryptorSaltSink extends ConstantSaltSink {
  */
 private class DefaultSaltSink extends ConstantSaltSink {
   DefaultSaltSink() { sinkNode(this, "encryption-salt") }
+}
+
+/**
+ * A barrier for appending, since appending strings to a constant string
+ * may (and often does) result in a non-constant string.
+ *
+ * Ideally, these would not be a barrier when there is flow to *all*
+ * inputs.
+ */
+private class AppendConstantSaltBarrier extends ConstantSaltBarrier {
+  AppendConstantSaltBarrier() {
+    this.asExpr() = any(AddExpr ae).getAnOperand()
+    or
+    this.asExpr() = any(AssignAddExpr aae).getAnOperand()
+    or
+    exists(CallExpr ce |
+      ce.getStaticTarget().getName() =
+        ["append(_:)", "appending(_:)", "appendLiteral(_:)", "appendInterpolation(_:)"] and
+      (
+        this.asExpr() = ce.getAnArgument().getExpr() or
+        this.asExpr() = ce.getQualifier()
+      )
+    )
+  }
 }
